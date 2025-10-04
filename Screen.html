@@ -1,0 +1,130 @@
+<!-- checkout.html -->
+<!doctype html>
+<html lang="pt-br">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <title>Pagamento do Evento</title>
+  <style>
+    body{background:#0A0E1A;color:#F3F4F6;font-family:system-ui,Arial;margin:0}
+    .wrap{max-width:520px;margin:24px auto;padding:16px}
+    .card{background:#0F172A;border:1px solid #1F2430;border-radius:14px;padding:16px}
+    label{display:block;margin:8px 0 4px;color:#9CA3AF}
+    input{width:100%;padding:12px;border-radius:10px;border:1px solid #1F2430;background:#111827;color:#F3F4F6}
+    button{width:100%;padding:12px;border-radius:10px;border:none;font-weight:800;cursor:pointer}
+    .primary{background:#FDE047;color:#111827}
+    .secondary{background:transparent;border:1px solid #1F2430;color:#F3F4F6}
+    .muted{color:#9CA3AF;text-align:center;margin:8px 0}
+    img{display:block;margin:12px auto;border-radius:8px}
+    .row{display:flex;gap:8px}
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <h2>Pagamento do Evento</h2>
+    <div id="step-form" class="card">
+      <p class="muted">Preencha seus dados para gerar o QR Pix.</p>
+      <label>Nome</label>
+      <input id="nome" placeholder="Seu nome" />
+      <label style="margin-top:8px;">Email</label>
+      <input id="email" placeholder="voce@email.com" />
+      <button class="primary" id="btnGerar">Gerar cobrança</button>
+    </div>
+
+    <div id="step-pix" class="card" style="display:none;">
+      <h3>Escaneie o QR Pix</h3>
+      <img id="qr" alt="QR Pix" width="240" height="240"/>
+      <p class="muted" id="txid"></p>
+      <div class="row">
+        <button class="secondary" id="btnCopiar">Copiar código Pix</button>
+        <button class="secondary" id="btnSimular">Simular pagamento</button>
+      </div>
+      <p class="muted" id="status">Aguardando pagamento...</p>
+    </div>
+  </div>
+
+<script>
+  // >>>>> CONFIGURE <<<<<
+  const BASE_URL = 'https://abc123.ngrok.io/api'; // troque pela sua URL pública
+
+  const qs = new URLSearchParams(location.search);
+  const eventId = qs.get('eventId'); // ex: checkout.html?eventId=652f...
+
+  const $ = (id) => document.getElementById(id);
+
+  let paymentId = null;
+  let emv = null;
+  let poll = null;
+
+  function startPolling() {
+    stopPolling();
+    poll = setInterval(async () => {
+      const r = await fetch(`${BASE_URL}/payments/${paymentId}/status`);
+      const data = await r.json();
+      if (data.status === 'pago') {
+        $('status').innerText = 'Pagamento confirmado! ✅';
+        stopPolling();
+      } else if (data.status === 'expirado') {
+        $('status').innerText = 'Cobrança expirada. Gere novamente.';
+        stopPolling();
+      }
+    }, 2500);
+  }
+  function stopPolling(){ if (poll) clearInterval(poll); }
+
+  $('btnGerar').onclick = async () => {
+    const nome = $('nome').value.trim();
+    const email = $('email').value.trim();
+    if (!eventId) return alert('Link sem eventId.');
+    if (!nome || !email) return alert('Informe nome e email.');
+
+    const resp = await fetch(`${BASE_URL}/payments/pix`, {
+      method: 'POST',
+      headers: { 'Content-Type':'application/json' },
+      body: JSON.stringify({ eventId, participante: { nome, email } })
+    });
+    if (!resp.ok) {
+      const err = await resp.json().catch(()=>({}));
+      return alert('Erro ao criar cobrança: ' + (err.message||resp.status));
+    }
+    const data = await resp.json();
+    paymentId = data?.pagamento?.id;
+    emv = data?.pagamento?.emv;
+    const qr = data?.pagamento?.qrCodeDataUrl;
+
+    if (!paymentId || !emv) return alert('Resposta inválida do servidor.');
+
+    $('txid').innerText = 'TXID: ' + data.pagamento.txid;
+    $('qr').src = qr || '';
+    $('status').innerText = 'Aguardando pagamento...';
+
+    $('step-form').style.display = 'none';
+    $('step-pix').style.display = 'block';
+
+    startPolling();
+  };
+
+  $('btnCopiar').onclick = async () => {
+    if (!emv) return;
+    try {
+      await navigator.clipboard.writeText(emv);
+      alert('Código Pix copiado.');
+    } catch {
+      // fallback
+      const ta = document.createElement('textarea');
+      ta.value = emv; document.body.appendChild(ta);
+      ta.select(); document.execCommand('copy'); ta.remove();
+      alert('Código Pix copiado.');
+    }
+  };
+
+  $('btnSimular').onclick = async () => {
+    if (!paymentId) return;
+    await fetch(`${BASE_URL}/payments/${paymentId}/simulate`, { method:'POST' });
+    alert('Pagamento simulado como PAGO no backend.');
+  };
+
+  window.addEventListener('beforeunload', stopPolling);
+</script>
+</body>
+</html>
